@@ -1,0 +1,8 @@
+---
+- hosts: web-server
+#  vars_prompt:
+#    - name: mysql_root_password
+#      prompt: Enter the mysql root password
+  roles:
+    - wordpress
+  become: true

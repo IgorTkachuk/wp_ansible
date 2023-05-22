@@ -1,0 +1,4 @@
+---
+# vars file for wordpress
+wp_config_file: 'wp-config.php'
+wp_config_sample_file: 'wp-config-sample.php'

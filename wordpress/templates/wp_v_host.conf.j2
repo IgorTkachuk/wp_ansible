@@ -1,0 +1,8 @@
+<VirtualHost {{ ansible_facts['default_ipv4']['address'] }}:80>
+    ServerName {{ v_host_wordpress_domain_name  }}
+    ServerAlias www.{{ v_host_wordpress_domain_name }}
+    ServerAdmin webmaster@localhost
+    DocumentRoot /var/www/{{ v_host_wordpress_domain_name }}
+    ErrorLog ${APACHE_LOG_DIR}/{{v_host_wordpress_domain_name}}_error.log
+    CustomLog ${APACHE_LOG_DIR}/{{v_host_wordpress_domain_name}}_access.log combined
+</VirtualHost>

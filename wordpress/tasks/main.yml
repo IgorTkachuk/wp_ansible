@@ -1,0 +1,184 @@
+---
+# tasks file for wordpress
+- name: Install Apache web server
+  ansible.builtin.apt:
+    name: apache2
+    update_cache: yes
+    cache_valid_time: 86400
+    state: present
+    
+- name: Install MySQL RDBMS server
+  ansible.builtin.apt:
+    name: default-mysql-server
+    update_cache: yes
+    cache_valid_time: 86400
+    state: present
+
+- name: Ensure MySQL enabled to run onstartup
+  ansible.builtin.service:
+    name: mysql
+    state: started
+    enabled: true
+
+- name: Install pip
+  apt:
+    name: python3-pip
+    update_cache: yes
+    state: present
+
+- name: Make sure pymysql is present
+  pip:
+    name: pymysql
+    state: present
+
+- name: Update MySQL root password for all root accounts
+  community.mysql.mysql_user:
+    name: root
+    host: "{{item}}"
+    password: "{{mysql_root_password}}"
+    login_user: root
+    login_password: "{{mysql_root_password}}"
+    login_unix_socket: "/var/run/mysqld/mysqld.sock"
+    check_implicit_admin: yes
+    priv: "*.*:ALL,GRANT"
+  with_items:
+    - "{{ansible_hostname}}"
+    - 127.0.0.1
+    - ::1
+    - localhost
+
+- name: Install PHP, php-mysql, libapache2-mod-php
+  ansible.builtin.apt:
+    name: "{{item}}"
+    update_cache: yes
+    cache_valid_time: 86400
+    state: present
+  with_items:
+    - php
+    - php-mysql
+    - libapache2-mod-php
+  notify:
+    - restart apache2
+
+- name: Creating Virtual host Document root
+  file:
+    state: directory
+    dest: "/var/www/{{v_host_domain_name}}"
+
+- name: "Copy webpages"
+  copy:
+      content: "<h1> WebPage </h1>"
+      dest: "/var/www/{{v_host_domain_name}}/index.html"
+
+- name: Configure Virtual Host
+  ansible.builtin.template:
+    src: "v_host.conf.j2"
+    dest: "/etc/apache2/sites-available/{{v_host_domain_name}}.conf"
+
+- name: Enadle Virtual Host
+  ansible.builtin.command: "a2ensite {{v_host_domain_name}}"
+  notify:
+    - restart apache2
+
+- name: Create Wordpress MySQL DB
+  community.mysql.mysql_db:
+    name: wordpress
+    state: present
+    check_implicit_admin: true
+    login_user: root
+    login_password: "{{mysql_root_password}}"
+    login_unix_socket: "/var/run/mysqld/mysqld.sock"
+    
+
+- name: Create Wordpress MySQL User
+  community.mysql.mysql_user:
+    name: wordpress
+    host: "{{item}}"
+    password: "{{mysql_wordpress_password}}"
+    login_user: root
+    login_password: "{{mysql_root_password}}"
+    login_unix_socket: "/var/run/mysqld/mysqld.sock"
+    check_implicit_admin: yes
+    priv: "wordpress.*:ALL,GRANT"
+  with_items:
+    - 127.0.0.1
+    - ::1
+    - localhost
+
+- name: Creating Virtual host Document root for Wordpress
+  file:
+    state: directory
+    dest: "/var/www/{{v_host_wordpress_domain_name}}"
+
+- name: Configure WP Virtual Host
+  ansible.builtin.template:
+    src: "wp_v_host.conf.j2"
+    dest: "/etc/apache2/sites-available/{{v_host_wordpress_domain_name}}.conf"
+
+- name: Enadle Virtual Host
+  ansible.builtin.command: "a2ensite {{v_host_wordpress_domain_name}}"
+  notify:
+    - restart apache2
+
+- name: Check if WP target dir already isn't empty. Maybe WP is already configured!
+  ansible.builtin.command: ls "/var/www/{{v_host_wordpress_domain_name}}"
+  register: wp_dir_ls
+
+- name: print debug
+  ansible.builtin.debug:
+    var: wp_dir_ls
+
+- name: Download  Wordpress distribution
+  ansible.builtin.get_url:
+    url: https://ru.wordpress.org/latest-ru_RU.tar.gz
+    dest: "/tmp"
+  when: wp_dir_ls.stdout == ""
+  register: wp_dist_download
+
+- name: Extract Wordpress distribution
+  ansible.builtin.unarchive:
+    src: "{{wp_dist_download.dest}}"
+    remote_src: true
+    dest: /tmp
+  when: wp_dist_download.changed
+  register: wp_dist_extracted
+
+- name: Move /var/tmp/wordpress content to WP prod dir
+  command: "sh -c 'mv /tmp/wordpress/* /var/www/{{v_host_wordpress_domain_name}}/'"
+  when: wp_dist_extracted.changed or wp_dir_ls.stdout==""
+
+- name: Check if WP config file exists
+  ansible.builtin.stat:
+    path: "/var/www/{{v_host_wordpress_domain_name}}/{{wp_config_file}}"
+  register: check_wp_config
+
+- name: print debug
+  ansible.builtin.debug:
+    var: check_wp_config
+
+- name: Copy WP sample config file to prod file
+  ansible.builtin.copy:
+    remote_src: true
+    src: "/var/www/{{v_host_wordpress_domain_name}}/{{wp_config_sample_file}}"
+    dest: "/var/www/{{v_host_wordpress_domain_name}}/{{wp_config_file}}"
+  when: not check_wp_config.stat.exists
+  register: new_wp_config
+
+- name: Remove sample WP config
+  ansible.builtin.file:
+    path: "/var/www/{{v_host_wordpress_domain_name}}/{{wp_config_sample_file}}"
+    state: absent
+  when: check_wp_config.stat.exists
+    
+- name: Set databse param and credentials in wordpress config
+  ansible.builtin.lineinfile:
+    path: "/var/www/{{v_host_wordpress_domain_name}}/{{wp_config_file}}"
+    regexp: "{{item.param_key}}"
+    line: "define('{{item.param_key}}', '{{item.param_value}}');"
+  with_items:
+    - param_key: 'DB_NAME'
+      param_value: 'wordpress'
+    - param_key: 'DB_PASSWORD'
+      param_value: "{{mysql_wordpress_password}}"
+    - param_key: 'DB_USER'
+      param_value: 'wordpress'
